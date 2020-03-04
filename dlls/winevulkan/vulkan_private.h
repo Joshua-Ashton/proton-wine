@@ -178,6 +178,7 @@ struct VkSwapchainKHR_T
     uint32_t n_images;
     struct fs_hack_image *fs_hack_images; /* struct fs_hack_image[n_images] */
     VkFilter fs_hack_filter;
+    VkFormat imageFormat;
     VkSampler sampler;
     VkDescriptorPool descriptor_pool;
     VkDescriptorSetLayout descriptor_set_layout;
