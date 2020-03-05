@@ -2649,11 +2649,7 @@ VkResult WINAPI wine_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pP
         our_presentInfo.pWaitSemaphores = &blit_sema;
     }
 
-    arr = heap_alloc(our_presentInfo.swapchainCount * sizeof(VkSwapchainKHR));
-    if(!arr){
-        ERR("Failed to allocate memory for swapchain array\n");
-        return VK_ERROR_OUT_OF_HOST_MEMORY;
-    }
+    arr = WINEVULKAN_ALLOCA(our_presentInfo.swapchainCount * sizeof(VkSwapchainKHR));
 
     for(i = 0; i < our_presentInfo.swapchainCount; ++i)
         arr[i] = ((struct VkSwapchainKHR_T *)(UINT_PTR)our_presentInfo.pSwapchains[i])->swapchain;
@@ -2661,8 +2657,6 @@ VkResult WINAPI wine_vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR *pP
     our_presentInfo.pSwapchains = arr;
 
     res = queue->device->funcs.p_vkQueuePresentKHR(queue->queue, &our_presentInfo);
-
-    heap_free(arr);
 
     return res;
 
