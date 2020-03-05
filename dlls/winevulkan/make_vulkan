@@ -219,8 +219,6 @@ STRUCT_CHAIN_CONVERSIONS = [
     "VkInstanceCreateInfo",
 ]
 
-shared_conversion_structs = ["VkBufferMemoryBarrier", "VkImageMemoryBarrier"]
-
 class Direction(Enum):
     """ Parameter direction: input, output, input_output. """
     INPUT = 1
@@ -1080,14 +1078,14 @@ class VkMember(object):
         struct = self.type_info["data"]
         direction = Direction.OUTPUT if struct.returnedonly else Direction.INPUT
         if self.is_dynamic_array():
-            conversions.append(ConversionFunction(False, True, struct.name in shared_conversion_structs, direction, struct))
+            conversions.append(ConversionFunction(False, True, direction, struct))
         elif self.is_static_array():
-            conversions.append(ConversionFunction(True, False, struct.name in shared_conversion_structs, direction, struct))
+            conversions.append(ConversionFunction(True, False, direction, struct))
         else:
-            conversions.append(ConversionFunction(False, False, struct.name in shared_conversion_structs, direction, struct))
+            conversions.append(ConversionFunction(False, False, direction, struct))
 
         if self.needs_free():
-            conversions.append(FreeFunction(self.is_dynamic_array(), struct.name in shared_conversion_structs, struct))
+            conversions.append(FreeFunction(self.is_dynamic_array(), struct))
 
         return conversions
 
@@ -1244,16 +1242,16 @@ class VkParam(object):
 
         # Input functions require win to host conversion.
         if self._direction in [Direction.INPUT, Direction.INPUT_OUTPUT]:
-            self.input_conv = ConversionFunction(False, self.is_dynamic_array(), self.struct.name in shared_conversion_structs, Direction.INPUT, self.struct)
+            self.input_conv = ConversionFunction(False, self.is_dynamic_array(), Direction.INPUT, self.struct)
 
         # Output functions require host to win conversion.
         if self._direction in [Direction.INPUT_OUTPUT, Direction.OUTPUT]:
-            self.output_conv = ConversionFunction(False, self.is_dynamic_array(), self.struct.name in shared_conversion_structs, Direction.OUTPUT, self.struct)
+            self.output_conv = ConversionFunction(False, self.is_dynamic_array(), Direction.OUTPUT, self.struct)
 
         # Dynamic arrays, but also some normal structs (e.g. VkCommandBufferBeginInfo) need memory
         # allocation and thus some cleanup.
         if self.is_dynamic_array() or self.struct.needs_free():
-            self.free_func = FreeFunction(self.is_dynamic_array(), self.struct.name in shared_conversion_structs, self.struct)
+            self.free_func = FreeFunction(self.is_dynamic_array(), self.struct)
 
     def _set_direction(self):
         """ Internal helper function to set parameter direction (input/output/input_output). """
@@ -1729,10 +1727,9 @@ class VkStruct(Sequence):
 
 
 class ConversionFunction(object):
-    def __init__(self, array, dyn_array, shared, direction, struct):
+    def __init__(self, array, dyn_array, direction, struct):
         self.array = array
         self.direction = direction
-        self.shared = shared
         self.dyn_array = dyn_array
         self.struct = struct
         self.type = struct.name
@@ -1753,10 +1750,7 @@ class ConversionFunction(object):
             return_type = "{0}_host".format(self.type)
 
         # Generate function prototype.
-        if self.shared:
-            body = ""
-        else:
-            body = "static inline "
+        body = "static inline "
         body += "{0} *{1}(".format(return_type, self.name)
         body += ", ".join(p for p in params)
         body += ")\n{\n"
@@ -1788,10 +1782,7 @@ class ConversionFunction(object):
         else:
             params = ["const {0} *in".format(self.type), "{0}_host *out".format(self.type)]
 
-        if self.shared:
-            body = ""
-        else:
-            body = "static inline "
+        body = "static inline "
         body += "void {0}(".format(self.name)
 
         # Generate parameter list
@@ -1825,10 +1816,7 @@ class ConversionFunction(object):
             params = ["const {0} *in".format(self.type), "{0} *out_host".format(self.type), "uint32_t count"]
 
         # Generate function prototype.
-        if self.shared:
-            body = ""
-        else:
-            body = "static inline "
+        body = "static inline "
         body += "void {0}(".format(self.name)
         body += ", ".join(p for p in params)
         body += ")\n{\n"
@@ -1908,9 +1896,8 @@ class ConversionFunction(object):
 
 
 class FreeFunction(object):
-    def __init__(self, dyn_array, shared, struct):
+    def __init__(self, dyn_array, struct):
         self.dyn_array = dyn_array
-        self.shared = shared
         self.struct = struct
         self.type = struct.name
 
@@ -1926,10 +1913,7 @@ class FreeFunction(object):
         """ Helper function for cleaning up temporary buffers required for array conversions. """
 
         # Generate function prototype.
-        if self.shared:
-            body = ""
-        else:
-            body = "static inline "
+        body = "static inline "
         body += "void {0}({1}_host *in, uint32_t count)\n{{\n".format(self.name, self.type)
 
         # E.g. VkGraphicsPipelineCreateInfo_host needs freeing for pStages.
@@ -1963,10 +1947,7 @@ class FreeFunction(object):
             return ""
 
         # Generate function prototype.
-        if self.shared:
-            body = ""
-        else:
-            body = "static inline "
+        body = "static inline "
         body += "void {0}({1}_host *in)\n{{\n".format(self.name, self.type)
 
         for m in self.struct:
@@ -2156,16 +2137,11 @@ class VkGenerator(object):
         # Generate any conversion helper functions.
         f.write("#if defined(USE_STRUCT_CONVERSION)\n")
         for conv in self.conversions:
-            if not conv.shared:
-                f.write(conv.definition())
+            f.write(conv.definition())
         f.write("#endif /* USE_STRUCT_CONVERSION */\n\n")
 
         for conv in self.struct_chain_conversions:
             f.write(conv.definition())
-
-        for conv in self.conversions:
-            if conv.shared:
-                f.write(conv.definition())
 
         # Create thunks for instance and device functions.
         # Global functions don't go through the thunks.
@@ -2307,10 +2283,6 @@ class VkGenerator(object):
         for func in self.struct_chain_conversions:
             f.write(func.prototype(postfix="DECLSPEC_HIDDEN") + ";\n")
         f.write("\n")
-
-        for conv in self.conversions:
-            if conv.shared:
-                f.write(conv.prototype())
 
         f.write("/* For use by vkDevice and children */\n")
         f.write("struct vulkan_device_funcs\n{\n")
