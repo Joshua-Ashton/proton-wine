@@ -107,6 +107,20 @@ static void *vulkan_handle;
 
 static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
 {
+    VkInstance instance;
+    VkInstanceCreateInfo instance_info;
+
+    instance = VK_NULL_HANDLE;
+
+    instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instance_info.pNext = NULL;
+    instance_info.flags = 0;
+    instance_info.pApplicationInfo = NULL;
+    instance_info.enabledLayerCount = 0;
+    instance_info.ppEnabledLayerNames = NULL;
+    instance_info.enabledExtensionCount = 0;
+    instance_info.ppEnabledExtensionNames = NULL;
+
     if (!(vulkan_handle = wine_dlopen(SONAME_LIBVULKAN, RTLD_NOW, NULL, 0)))
     {
         ERR("Failed to load %s.\n", SONAME_LIBVULKAN);
@@ -114,7 +128,7 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
     }
 
 #define LOAD_FUNCPTR(f) if (!(p##f = wine_dlsym(vulkan_handle, #f, NULL, 0))) goto fail;
-#define LOAD_OPTIONAL_FUNCPTR(f) p##f = wine_dlsym(vulkan_handle, #f, NULL, 0);
+#define LOAD_OPTIONAL_FUNCPTR(f) if (!(p##f = wine_dlsym(vulkan_handle, #f, NULL, 0))) p##f = pvkGetInstanceProcAddr(instance, #f);
     LOAD_FUNCPTR(vkCreateInstance)
     LOAD_FUNCPTR(vkCreateSwapchainKHR)
     LOAD_FUNCPTR(vkCreateXlibSurfaceKHR)
@@ -124,6 +138,10 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
     LOAD_FUNCPTR(vkEnumerateInstanceExtensionProperties)
     LOAD_FUNCPTR(vkGetDeviceProcAddr)
     LOAD_FUNCPTR(vkGetInstanceProcAddr)
+
+    if (pvkCreateInstance(&instance_info, NULL, &instance) != VK_SUCCESS)
+        goto fail;
+
     LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDeviceSurfaceCapabilities2KHR)
     LOAD_FUNCPTR(vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
     LOAD_OPTIONAL_FUNCPTR(vkGetPhysicalDeviceSurfaceFormats2KHR)
@@ -140,9 +158,15 @@ static BOOL WINAPI wine_vk_init(INIT_ONCE *once, void *param, void **context)
 
     vulkan_hwnd_context = XUniqueContext();
 
+    if (instance != VK_NULL_HANDLE)
+        pvkDestroyInstance(instance, NULL);
+
     return TRUE;
 
 fail:
+    if (instance != VK_NULL_HANDLE && pvkDestroyInstance != NULL)
+        pvkDestroyInstance(instance, NULL);
+
     wine_dlclose(vulkan_handle, NULL, 0);
     vulkan_handle = NULL;
     return TRUE;
